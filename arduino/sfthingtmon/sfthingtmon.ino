@@ -29,6 +29,8 @@
 #include <ESP8266WiFi.h>
 #include <Wire.h>
 
+#define SERIALBAUD 9600
+
 //---------------------------------------- WiFi Definitions
 const char WiFiPSK[] = "jandgwiley";
 int       svrport = 1969;
@@ -121,15 +123,23 @@ readTC74(int addr)
 } // readTC74
 
 //---------------------------------------- readCT
-// read current transformer, return value
+// read current transformer 10 times, average the result, return avg
+// we do this b/c we are sampling AC and want to make sure we get a 
+// good picture of the snapshot of the wave
 int
 readCT()
 {
 	int res = 0;
+	int i;
 
 	delay(10);
-	res = analogRead(ANALOG_PIN);
-	delay(10);
+	for(i=0; i<10; i++)
+	{
+		res += analogRead(ANALOG_PIN);
+		delay(10);
+	}
+
+	res = res / 10;
 
 	return res;
 } // readCT
@@ -234,7 +244,9 @@ connectWiFi()
 void
 initHardware()
 {
-	Serial.begin(9600);
+	Serial.begin(SERIALBAUD);
+
+   Serial.println("initHardware start");
 
 	pinMode(DIGITAL_PIN, INPUT_PULLUP);
 	pinMode(ANALOG_PIN, INPUT);
@@ -248,8 +260,9 @@ initHardware()
 
 	// I2C setup (as a bus master)
 	Wire.begin();
-   delay(10);
+	delay(10);
 
+   Serial.println("initHardware end");
 } // initHardware
 
 // end
