@@ -21,11 +21,16 @@ TODO: read node config file to get name and calibration data
 #include <netinet/in.h>
 #include <netdb.h>
 
+#define DEBUG 1
+
 #define PORT       5555
 #define MAXMSGLEN  512
 #define MAXCFGLINE 255
 // backlog for listen for server socket
 #define LSTNBACKLOG 5
+
+// max number of sensors on a node
+#define NSENSORS 4
 
 // used to store calibration data for a specific node
 // values in calibration fields are added to values received from node
@@ -33,10 +38,20 @@ struct nodecfg_st
 {
    char *mac;
    char *name;
-   int  cal1;
-   int  cal2;
-   int  cal3;
-   int  cal4;
+   // + indicates connected, - indicates not connected
+   char sensors[NSENSORS];
+   // calibration adjustment for each sensor
+   int  cal[NSENSORS];
+};
+
+// message received from monitor node
+struct nodemsg_st
+{
+    char *name;
+    int  sens1;
+    int  sens2;
+    int  sens3;
+    int  sens4;
 };
 
 //---------------------------------------- readnodecfg
@@ -49,53 +64,105 @@ struct nodecfg_st
 struct nodecfg_st **
 readnodecfg(char *fn)
 {
-   FILE   *f;
-   int    nnodes = 0;
-   int    ntok;
-   char   txt[MAXCFGLINE+1];
-   char   *tok;
-   struct nodecfg_st **nodecfgs = NULL;
-   struct nodecfg_st *node;
+    FILE   *f;
+    int    nnodes = 0;
+    int    ntok;
+    int    s;
+    char   txt[MAXCFGLINE+1];
+    char   *tok;
+    struct nodecfg_st **nodecfgs = NULL;
+    struct nodecfg_st *nodecfg = NULL;
+    struct nodecfg_st *node;
 
-   f = fopen(fn, "r");
-   if(f != NULL)
-   {
-      while(fgets(txt, MAXCFGLINE, f) != NULL)
-      {
-         if(txt[0] != '#' && txt[0] != '\n')
-         {
-            // TODO: bail on malloc error
-            node = (struct nodecfg_st *) malloc(sizeof(struct nodecfg_st));
+    nodecfgs = (struct nodecfg_st **) malloc(sizeof(struct nodecfg_st *));
+    nodecfgs[0] = NULL;
 
-            tok  = strtok(txt, " \n");
-            ntok = 0;
-            while(tok != NULL)
+#ifdef DEBUG
+    printf("DEBUG: readnodecfg()\n");
+#endif
+
+    f = fopen(fn, "r");
+    if(f == NULL)
+    {
+        perror(" unable to open node config file");
+        exit(1);
+    }
+    else
+    {
+        while(fgets(txt, MAXCFGLINE, f) != NULL)
+        {
+            if(txt[0] != '#' && txt[0] != '\n')
             {
-               if(ntok == 0)
-                  node->mac = strdup(tok);
-               else if(ntok == 1)
-                  node->name = strdup(tok);
-               else if(ntok == 2)
-                  node->cal1 = atoi(tok);
-               else if(ntok == 3)
-                  node->cal2 = atoi(tok);
-               else if(ntok == 4)
-                  node->cal3 = atoi(tok);
-               else if(ntok == 5)
-                  node->cal4 = atoi(tok);
+                // TODO: bail on malloc error
+                node = (struct nodecfg_st *) malloc(sizeof(struct nodecfg_st));
+                node->mac      = strdup("");
+                node->name     = strdup("");
+                for(s=0; s++; s<NSENSORS)
+                {
+                    node->sensors[s] = '-';
+                    node->cal[s]     = 0;
+                }
 
-               ntok++;
-               tok = strtok(NULL, " \n");
-            } // while tok
+                tok  = strtok(txt, " \n");
+                ntok = 0;
+                while(tok != NULL)
+                {
+                    if(ntok == 0)
+                    {
+                        free(node->mac);
+                        node->mac = strdup(tok);
+                    }
+                    else if(ntok == 1)
+                    {
+                        free(node->name);
+                        node->name = strdup(tok);
+                    }
+                    else if(ntok >= 2)
+                    {
+                        if(strcmp(tok, "-") != 0)
+                            node->sensors[ntok-2] = '+';
+                        node->cal[ntok-2] = atoi(tok);
+                    }
 
-            nodecfgs = (struct nodecfg_st **) realloc(nodecfgs
-             , nnodes * sizeof(struct nodecfg_st *));
-            nodecfgs[nnodes] = node;
-         } // if txt
-      } // while
-      fclose(f);
-   }
+                    ntok++;
+                    tok = strtok(NULL, " \n");
+                } // while tok
 
+                nnodes++;
+                nodecfgs = (struct nodecfg_st **) realloc(nodecfgs
+                 , nnodes * sizeof(struct nodecfg_st *));
+                nodecfgs[nnodes-1] = node;
+            } // if txt
+        } // while
+        fclose(f);
+    } // if f else
+
+    nodecfgs = (struct nodecfg_st **) realloc(nodecfgs
+     , (nnodes+1) * sizeof(struct nodecfg_st *));
+    nodecfgs[nnodes] = NULL;
+
+#ifdef DEBUG
+    nnodes = 0;
+    while(nodecfgs && (nodecfg = nodecfgs[nnodes]) != NULL)
+    {
+        printf("DEBUG: node=%d, mac=%s, name=%s"
+         , nnodes, nodecfg->mac, nodecfg->name);
+        for(s=0; s<NSENSORS; s++)
+        {
+            printf(", cal%d=", s);
+            if(nodecfg->sensors[s] == '-')
+                printf("nc");
+            else
+                printf("%d", nodecfg->cal[s]);
+        }
+        printf("\n");
+        nnodes++;
+    }
+#endif
+
+#ifdef DEBUG
+    printf("DEBUG: end readnodecfg()\n");
+#endif
    return nodecfgs;
 } // readnodecfg
 
@@ -190,6 +257,42 @@ make_socket (uint16_t port)
   return sock;
 } // make_socket
 
+//---------------------------------------- usage
+/** usage
+  display command line options and usage
+*/
+void
+usage(void)
+{
+    printf(
+     "USAGE: owbmonsvr [-h] [-c <nodecfg_file>]\n"
+     "-c <nodecfg_file>  file with node configurations/calibrations\n"
+     "-h                 this help message\n"
+     "\n"
+     "Node Config File\n"
+     "  One line per monitor node, space delimited fields\n"
+     "  <macaddr> <nodename> <cal1> <cal2> <cal3> <cal4>\n"
+     "  eg: 18fe34f17979 furnace 2 -1 0 0\n"
+     "  The calibration fields are added to the sensor values.\n"
+     "\n"
+    );
+
+    return;
+} // usage
+
+//---------------------------------------- parsemsg
+/**
+*/
+struct nodemsg_st *
+parsemsg(char *txt)
+{
+    struct nodemsg_st *msg;
+
+    msg = (struct nodemsg_st *) malloc(sizeof(struct nodemsg_st));
+
+    return msg;
+} // parsemsg
+
 //---------------------------------------- main
 /**
    @param argc command line argument count
@@ -197,16 +300,42 @@ make_socket (uint16_t port)
    @return 0 on success
 */
 int
-main (void)
+main(int argc, char *argv[])
 {
-   int    sock;
-   int    newsock;
-   int    i;
-   size_t size;
-   fd_set active_fd_set;
-   fd_set read_fd_set;
-   struct sockaddr_in clientname;
-   char   msgs[255][MAXMSGLEN+1];
+    int    sock;
+    int    newsock;
+    int    i;
+    size_t size;
+    fd_set active_fd_set;
+    fd_set read_fd_set;
+    struct sockaddr_in clientname;
+    char   msgs[255][MAXMSGLEN+1];
+    char   opt;
+    char   *fn_nodecfg = NULL;
+    struct nodecfg_st **nodecfgs = NULL;
+    struct nodemsg_st *nodemsg;
+
+
+    while((opt=getopt(argc, argv, "c:h")) != -1)
+    {
+        switch(opt)
+        {
+            case 'c':
+                fn_nodecfg = strdup(optarg);
+                break;
+
+            case 'h':
+            default:
+                usage();
+                exit(1);
+                break;
+        } // switch
+    } // while
+
+    if(fn_nodecfg)
+    {
+        nodecfgs = readnodecfg(fn_nodecfg);
+    }
 
    sock = make_socket(PORT);
    if (listen(sock, LSTNBACKLOG) < 0)
@@ -257,7 +386,7 @@ main (void)
                /* Data arriving on an already-connected socket. */
                if(readnode(i, msgs[i]) < 0)
                {
-                  parsemsg(msgs[i]);
+                  nodemsg = parsemsg(msgs[i]);
                   close(i);
                   FD_CLR(i, &active_fd_set);
                }
