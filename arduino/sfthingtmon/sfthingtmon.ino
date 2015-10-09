@@ -123,23 +123,36 @@ readTC74(int addr)
 } // readTC74
 
 //---------------------------------------- readCT
-// read current transformer 10 times, average the result, return avg
-// we do this b/c we are sampling AC and want to make sure we get a 
-// good picture of the snapshot of the wave
+/** read current transformer looking for the peak and return the peak
+*/
 int
 readCT()
 {
 	int res = 0;
-	int i;
+    int adc;
+    unsigned long startms;
+    unsigned long endms;
+    unsigned long nowms;
 
-	delay(10);
-	for(i=0; i<10; i++)
-	{
-		res += analogRead(ANALOG_PIN);
-		delay(10);
-	}
+    // if we sample for a full AC cycle we will get something
+    // close to the max, 60Hz = about 15ms per cycle
+    startms = millis();
+    endms = startms + 20;
+    while(1)
+    {
+		adc = analogRead(ANALOG_PIN);
+        if(adc > res)
+            res = adc;
 
-	res = res / 10;
+        // if now is past roll over then make sure we catch it
+        // if the end is past a roll over then make sure we end
+        nowms = millis();
+        if((startms < endms && (nowms > endms || nowms < startms))
+         || startms > endms && nowms > endms)
+            break;
+
+        delay(1);
+    } // while
 
 	return res;
 } // readCT

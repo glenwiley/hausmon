@@ -1,0 +1,18 @@
+# Glen Wiley <glen.wiley@gmail.com>
+#
+# Makfile for the owbmon server program
+#
+
+DEBUG=-g
+#CFLAGS=-DDEBUG=1
+.c.o:
+	$(CC) $(CFLAGS) $(DEBUG) -c $^
+
+owbmonsvr : owbmonsvr.o
+	$(CC) $(DEBUG) -o $@ $^
+
+clean :
+	rm -f owbmonsvr.o core
+
+clobber : clean
+	rm -f owbmonsvr

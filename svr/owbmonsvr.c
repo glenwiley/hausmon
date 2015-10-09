@@ -1,14 +1,14 @@
 /**
-   @file hausmonsvr.c
+   @file owbmonsvr.c
    @author Glen Wiley <glen.wiley@gmail.com>
-   @brief hausmon network server that accepts data form hausmon nodes
+   @brief owbmonsvr network server that accepts data form owbmonsvr nodes
    @details network server that accepts multiple concurrent clients
-            intended to provide reporting interface to hausmon nodes
+            intended to provide reporting interface to owbmonsvr nodes
             runs continuously, exits != 0 if cant create a socket to listen on
 
 TODO: daemonize
 TODO: proper syslog style error logging
-TODO: read node config file to get name and calibration data
+TODO: write to output file such that it can be rotated
 */
 
 #include <stdio.h>
@@ -20,10 +20,9 @@ TODO: read node config file to get name and calibration data
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <time.h>
 
-#define DEBUG 1
-
-#define PORT       5555
+#define PORT       1969
 #define MAXMSGLEN  512
 #define MAXCFGLINE 255
 // backlog for listen for server socket
@@ -38,20 +37,10 @@ struct nodecfg_st
 {
    char *mac;
    char *name;
-   // + indicates connected, - indicates not connected
-   char sensors[NSENSORS];
+   // names of sensors, emtpy string = not connected
+   char *sensors[NSENSORS];
    // calibration adjustment for each sensor
    int  cal[NSENSORS];
-};
-
-// message received from monitor node
-struct nodemsg_st
-{
-    char *name;
-    int  sens1;
-    int  sens2;
-    int  sens3;
-    int  sens4;
 };
 
 //---------------------------------------- readnodecfg
@@ -68,8 +57,10 @@ readnodecfg(char *fn)
     int    nnodes = 0;
     int    ntok;
     int    s;
+    int    lineno = 0;
     char   txt[MAXCFGLINE+1];
     char   *tok;
+    char   *p;
     struct nodecfg_st **nodecfgs = NULL;
     struct nodecfg_st *nodecfg = NULL;
     struct nodecfg_st *node;
@@ -89,8 +80,11 @@ readnodecfg(char *fn)
     }
     else
     {
+        // TODO: report errors in config file syntax
+
         while(fgets(txt, MAXCFGLINE, f) != NULL)
         {
+            lineno++;
             if(txt[0] != '#' && txt[0] != '\n')
             {
                 // TODO: bail on malloc error
@@ -99,13 +93,13 @@ readnodecfg(char *fn)
                 node->name     = strdup("");
                 for(s=0; s++; s<NSENSORS)
                 {
-                    node->sensors[s] = '-';
+                    node->sensors[s] = NULL;
                     node->cal[s]     = 0;
                 }
 
                 tok  = strtok(txt, " \n");
                 ntok = 0;
-                while(tok != NULL)
+                while(tok != NULL && *tok != '\0')
                 {
                     if(ntok == 0)
                     {
@@ -119,9 +113,22 @@ readnodecfg(char *fn)
                     }
                     else if(ntok >= 2)
                     {
-                        if(strcmp(tok, "-") != 0)
-                            node->sensors[ntok-2] = '+';
-                        node->cal[ntok-2] = atoi(tok);
+                        // field format is "<name>:<cal>"
+                        // no name means no sensor is connected
+                        if(tok[0] != ':')
+                        {
+                            p = strchr(tok, ':');
+                            if(*p != '\0')
+                            {
+                                *p = '\0';
+                                node->sensors[ntok-2] = strdup(tok);
+                                p++;
+                                if(*p != '\0')
+                                    node->cal[ntok-2] = atoi(p);
+                                else
+                                    node->cal[ntok-2] = 0;
+                            }
+                        }
                     }
 
                     ntok++;
@@ -150,7 +157,7 @@ readnodecfg(char *fn)
         for(s=0; s<NSENSORS; s++)
         {
             printf(", cal%d=", s);
-            if(nodecfg->sensors[s] == '-')
+            if(nodecfg->sensors[s] == NULL)
                 printf("nc");
             else
                 printf("%d", nodecfg->cal[s]);
@@ -166,34 +173,72 @@ readnodecfg(char *fn)
    return nodecfgs;
 } // readnodecfg
 
-//---------------------------------------- getnodecfg
-/**
-  search the list of node configs for a matching mac
-
-*/
-struct nodecfg_st *
-getnodecfg()
-{
-} // getnodecfg
-
 //---------------------------------------- printmsg
 /**
   format the message received from a node and print it
+  input: <mac_addr> <sensor0> <sensor1> <sensor2> <sensor3>
+  output: <time> <name> <sensor0> <sensor1> <sensor2> <sensor3>
   @param msg  message received from node
   @returns 0 on success
 */
 int
-printmsg(char *msg)
+printmsg(struct nodecfg_st **nodecfgs, char *msg)
 {
-   int retval = 0;
-   return retval;
+    int       retval = 0;
+    int       i;
+    char      *tok;
+    struct    nodecfg_st *nodecfg = NULL;
+    time_t    now;
+    struct tm *tmnow;
+
+    // find the nodecfg whose mac matches the message mac addr
+
+    tok = strtok(msg, " \n");
+    if(tok != NULL && *tok != '\0')
+    {
+        i = 0;
+        while(nodecfgs[i] && nodecfg == NULL)
+        {
+            if(nodecfgs[i]->mac && strcmp(nodecfgs[i]->mac, tok) == 0)
+                nodecfg = nodecfgs[i];
+            else
+                i++;
+        }
+    } // if tok
+
+    now = time(NULL);
+    tmnow = localtime(&now);
+    printf("%04d%02d%02d%02d%02d%02d ", 1900+(tmnow->tm_year), tmnow->tm_mon
+     , 1+tmnow->tm_mday, tmnow->tm_hour, tmnow->tm_min, tmnow->tm_sec);
+
+    if(nodecfg)
+        printf("%s ", (nodecfg->name ? nodecfg->name : nodecfg->mac));
+    else
+        printf("%s ", tok);
+
+    for(i=0; i<NSENSORS; i++)
+    {
+        if(tok && *tok != '\0')
+        {
+            tok = strtok(NULL, " \n");
+            if(nodecfg->sensors[i] != NULL)
+                printf("%d ", nodecfg->cal[i] + atoi(tok));
+            else
+                printf("- ");
+        }
+    }
+
+    printf("\n");
+
+    return retval;
 } // printmsg
 
 //---------------------------------------- readnode
 /**
   read network message from node at fd and store in msg
   @param fd   file descriptor to read from
-  @param msg  previously allocate storage for message
+  @param msg  previously allocated storage for message, new data is
+              appended to this buffer
   @returns number of bytes read, -1 on EOF
 */
 int
@@ -201,6 +246,7 @@ readnode (int fd, char *msg)
 {
    char buffer[MAXMSGLEN];
    int  nbytes;
+   int  n;
    int  retval = 0;
 
    nbytes = read(fd, buffer, MAXMSGLEN);
@@ -217,7 +263,8 @@ readnode (int fd, char *msg)
    else
    {
       buffer[nbytes] = '\0';
-      strcat(msg, buffer);
+      n = MAXMSGLEN - (strlen(msg) + nbytes);
+      strncat(msg, buffer, n);
       retval = nbytes;
    }
 
@@ -279,19 +326,6 @@ usage(void)
 
     return;
 } // usage
-
-//---------------------------------------- parsemsg
-/**
-*/
-struct nodemsg_st *
-parsemsg(char *txt)
-{
-    struct nodemsg_st *msg;
-
-    msg = (struct nodemsg_st *) malloc(sizeof(struct nodemsg_st));
-
-    return msg;
-} // parsemsg
 
 //---------------------------------------- main
 /**
@@ -365,31 +399,35 @@ main(int argc, char *argv[])
          {
             if(i == sock)
             {
-               size = sizeof(clientname);
-               newsock = accept(sock, (struct sockaddr *) &clientname
-                , (socklen_t *) &size);
-               if(newsock < 0)
-               {
-                 // TODO: handle this error without exiting
-                  perror ("accept");
-                  exit (EXIT_FAILURE);
-               }
-//               fprintf (stderr,
-//                         "Server: connect from host %s, port %hd.\n",
-//                         inet_ntoa (clientname.sin_addr),
-//                         ntohs (clientname.sin_port));
+                #ifdef DEBUG
+                printf("DEBUG: select read fd %d\n", i);
+                #endif
+
+                size = sizeof(clientname);
+                newsock = accept(sock, (struct sockaddr *) &clientname
+                 , (socklen_t *) &size);
+                if(newsock < 0)
+                {
+                    // TODO: handle this error without exiting
+                    perror ("accept");
+                    exit (EXIT_FAILURE);
+                }
                 msgs[newsock][0] = '\0'; 
                 FD_SET (newsock, &active_fd_set);
             } // if i == sock
             else
             {
                /* Data arriving on an already-connected socket. */
+               /* is appended to the message in the array */
                if(readnode(i, msgs[i]) < 0)
                {
-                  nodemsg = parsemsg(msgs[i]);
-                  close(i);
-                  FD_CLR(i, &active_fd_set);
-               }
+                    /* once we get 0 bytes from the fd we know that we are
+                       done reading and can process the message */
+                    close(i);
+                    FD_CLR(i, &active_fd_set);
+                    printmsg(nodecfgs, msgs[i]);
+                    memset(msgs[i], '\0', MAXMSGLEN);
+                } // if readnode
             } // if i == sock else
          } // if read fd is set
       } // for
@@ -398,4 +436,4 @@ main(int argc, char *argv[])
    return 0;
 } // main
 
-// hausmonsvr.c
+// owbmonsvr.c
