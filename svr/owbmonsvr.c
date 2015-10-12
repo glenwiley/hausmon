@@ -6,9 +6,7 @@
             intended to provide reporting interface to owbmonsvr nodes
             runs continuously, exits != 0 if cant create a socket to listen on
 
-TODO: daemonize
 TODO: proper syslog style error logging
-TODO: write to output file such that it can be rotated
 */
 
 #include <stdio.h>
@@ -178,11 +176,13 @@ readnodecfg(char *fn)
   format the message received from a node and print it
   input: <mac_addr> <sensor0> <sensor1> <sensor2> <sensor3>
   output: <time> <name> <sensor0> <sensor1> <sensor2> <sensor3>
+  @param nodecfg null terminated list of array of node config data
   @param msg  message received from node
+  @param fn_out output file name, if NULL then use stdout
   @returns 0 on success
 */
 int
-printmsg(struct nodecfg_st **nodecfgs, char *msg)
+printmsg(struct nodecfg_st **nodecfgs, char *msg, char *fn_out)
 {
     int       retval = 0;
     int       i;
@@ -190,6 +190,13 @@ printmsg(struct nodecfg_st **nodecfgs, char *msg)
     struct    nodecfg_st *nodecfg = NULL;
     time_t    now;
     struct tm *tmnow;
+    FILE      *fh;
+
+    if(fn_out)
+        fh = fopen(fn_out, "a");
+
+    if(fh == NULL)
+        fh = stdout;
 
     // find the nodecfg whose mac matches the message mac addr
 
@@ -208,13 +215,14 @@ printmsg(struct nodecfg_st **nodecfgs, char *msg)
 
     now = time(NULL);
     tmnow = localtime(&now);
-    printf("%04d%02d%02d%02d%02d%02d ", 1900+(tmnow->tm_year), tmnow->tm_mon
-     , 1+tmnow->tm_mday, tmnow->tm_hour, tmnow->tm_min, tmnow->tm_sec);
+    fprintf(fh, "%04d%02d%02d%02d%02d%02d ", 1900+(tmnow->tm_year)
+     , tmnow->tm_mon, 1+tmnow->tm_mday, tmnow->tm_hour, tmnow->tm_min
+     , tmnow->tm_sec);
 
     if(nodecfg)
-        printf("%s ", (nodecfg->name ? nodecfg->name : nodecfg->mac));
+        fprintf(fh, "%s ", (nodecfg->name ? nodecfg->name : nodecfg->mac));
     else
-        printf("%s ", tok);
+        fprintf(fh, "%s ", tok);
 
     for(i=0; i<NSENSORS; i++)
     {
@@ -222,13 +230,16 @@ printmsg(struct nodecfg_st **nodecfgs, char *msg)
         {
             tok = strtok(NULL, " \n");
             if(nodecfg->sensors[i] != NULL)
-                printf("%d ", nodecfg->cal[i] + atoi(tok));
+                fprintf(fh, "%d ", nodecfg->cal[i] + atoi(tok));
             else
-                printf("- ");
+                fprintf(fh, "- ");
         }
     }
 
-    printf("\n");
+    fprintf(fh, "\n");
+
+    if(fh != stdout)
+        fclose(fh);
 
     return retval;
 } // printmsg
@@ -312,16 +323,19 @@ void
 usage(void)
 {
     printf(
-     "USAGE: owbmonsvr [-h] [-c <nodecfg_file>]\n"
+     "USAGE: owbmonsvr [-h] [-f] [-c <nodecfg_file>]\n"
      "-c <nodecfg_file>  file with node configurations/calibrations\n"
+     "-f                 run in the foreground, otherwise we daemonize\n"
      "-h                 this help message\n"
+     "-o <out_file>      store output data in this file (default is stdout)\n"
+     "-p <port>          listen on specified port, default is %d\n"
      "\n"
      "Node Config File\n"
      "  One line per monitor node, space delimited fields\n"
-     "  <macaddr> <nodename> <cal1> <cal2> <cal3> <cal4>\n"
-     "  eg: 18fe34f17979 furnace 2 -1 0 0\n"
+     "  <macaddr> <nodename> <name1>:<cal1> <name2>:<cal2> <name3>:<cal3> <name4>:<cal4>\n"
+     "  eg: 18fe34f17979 furnace in:2 out:-1 ambient:0 power:0\n"
      "  The calibration fields are added to the sensor values.\n"
-     "\n"
+     "\n", PORT
     );
 
     return;
@@ -339,6 +353,8 @@ main(int argc, char *argv[])
     int    sock;
     int    newsock;
     int    i;
+    int    foreground = 0;
+    int    portn = PORT;
     size_t size;
     fd_set active_fd_set;
     fd_set read_fd_set;
@@ -346,16 +362,29 @@ main(int argc, char *argv[])
     char   msgs[255][MAXMSGLEN+1];
     char   opt;
     char   *fn_nodecfg = NULL;
+    char   *fn_out = NULL;
     struct nodecfg_st **nodecfgs = NULL;
     struct nodemsg_st *nodemsg;
 
 
-    while((opt=getopt(argc, argv, "c:h")) != -1)
+    while((opt=getopt(argc, argv, "c:fho:p:")) != -1)
     {
         switch(opt)
         {
             case 'c':
                 fn_nodecfg = strdup(optarg);
+                break;
+
+            case 'f':
+                foreground = 1;
+                break;
+
+            case 'o':
+                fn_out = strdup(optarg);
+                break;
+
+            case 'p':
+                portn = atoi(optarg);
                 break;
 
             case 'h':
@@ -366,12 +395,13 @@ main(int argc, char *argv[])
         } // switch
     } // while
 
-    if(fn_nodecfg)
-    {
-        nodecfgs = readnodecfg(fn_nodecfg);
-    }
+    if(foreground == 0)
+        daemon(1, 1);
 
-   sock = make_socket(PORT);
+    if(fn_nodecfg)
+        nodecfgs = readnodecfg(fn_nodecfg);
+
+   sock = make_socket(portn);
    if (listen(sock, LSTNBACKLOG) < 0)
    {
       perror("listen");
@@ -425,7 +455,7 @@ main(int argc, char *argv[])
                        done reading and can process the message */
                     close(i);
                     FD_CLR(i, &active_fd_set);
-                    printmsg(nodecfgs, msgs[i]);
+                    printmsg(nodecfgs, msgs[i], fn_out);
                     memset(msgs[i], '\0', MAXMSGLEN);
                 } // if readnode
             } // if i == sock else

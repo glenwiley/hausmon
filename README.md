@@ -14,6 +14,7 @@ The logical components of the system are:
 * house egres monitor node
 ** TC74A0: temperature of water entering crawl space
 ** TC74A2: temperature of water leaving crawl space
+** TC74A5: outside ambient temperature
 * Domestic Hot Water monitor node
 ** TC74A0: temperature of water entering heat exchanger
 ** TC74A2: temperature of water leaving heat exchanger
@@ -84,11 +85,40 @@ to the MCU via the USB mini connector on the board.
 The TC74 from Microchip has an I2C interface, the fixed address for each
 device is indicated by the part suffix (A0, A2, A5).  The TC74 is available
 in both 5V and 3.3A specifications, the 3.3V is used in this project
-since the MCU is running at 3.3V.  The TC74 provides 
-a very simple interface for reading teh temperature in Celsius.  Each sensor
-is calibrated before deployment, the calibration adjustment is stored in a
-file used by the network server to adjust the readings prior to permanent
-storage.
+since the MCU is running at 3.3V.
+
+The TC74 provides a very simple interface for reading the temperature in
+degrees Celsius.  Each sensor is calibrated before deployment by measuring
+ambient temerature using a dedicated TC74 reserved for calibration and then
+comparing it to the readings from the sensors on the device.  The calibration
+adjustments are stored in a file which is then used by the network server to
+adjust the readings prior to permanent storage.
+
+The TC74 in a TO220 package is connected to the I2C network
+as follows (pardon the art):
+
++----------+
+|          |
+|     0    |
+|          |
++----------+
+|          |
+|   TC74   |
+|    A0    |
+|          |
++----------+
+|1|2 |3 |4 |5
+| |  |  |  |
+| |  |  |  |
+| |  |  |  |
+n S  G  S  V
+c D  N  C  D
+  A  D  L  D
+        K
+
+I used some spare CAT5e network cable to connect them, no additional
+components are necessary, each pin on each sensor is connected to the
+same one of the four wires.
 
 ### Current Transformer
 
@@ -96,7 +126,35 @@ The noninvasive current transformer clips over one of the AC lines and
 provides 10mV per amp to the ADC on the MCU.  A 20 Ohm burden resistor
 is used to provide a load for the coil.
 
+### Reporting
+Data is reported by the monitor node in one line records via a TCP
+socket.  Each record is formatted as a space delimited line:
+<pre>
+mac_address sensor0 sensor1 sensor2 sensor3
+</pre>
+
+Four sample records are:
+<pre>
+18fe34f17d19 2 2 2 363
+18fe34f17d19 2 2 2 363
+18fe34f17d19 2 2 2 367
+18fe34f17d19 2 2 2 369
+</pre>
+
 ## Server
 
 The network server (in svr/) listens for connections from the monitoring
-nodes and records data reported by the nodes.
+nodes and records data reported by the nodes.  It adjusts sensor readings
+using calibration values in the node configuration file, stores the name
+assigned to the MAC address that reported the data and records the
+date and time as YYYYMMDDHHMMSS.
+
+### Node Configuration
+
+The monitor nodes can be configured in the node configuration file
+
+<pre>
+mac_address node_name sensor0_name:calibration sensor1_name:calibration sensor2_name:calibration sensor3_name:calibration
+</pre>
+
+If a sensor is not connected for a node then that field in the configuration record should be specified as a colon ":".
