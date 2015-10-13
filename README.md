@@ -97,6 +97,7 @@ adjust the readings prior to permanent storage.
 The TC74 in a TO220 package is connected to the I2C network
 as follows (pardon the art):
 
+<pre>
 +----------+
 |          |
 |     0    |
@@ -115,6 +116,7 @@ n S  G  S  V
 c D  N  C  D
   A  D  L  D
         K
+</pre>
 
 I used some spare CAT5e network cable to connect them, no additional
 components are necessary, each pin on each sensor is connected to the
@@ -157,4 +159,5 @@ The monitor nodes can be configured in the node configuration file
 mac_address node_name sensor0_name:calibration sensor1_name:calibration sensor2_name:calibration sensor3_name:calibration
 </pre>
 
-If a sensor is not connected for a node then that field in the configuration record should be specified as a colon ":".
+If one of the four sensors is not connected for a node then that field in the
+configuration record should be specified as a colon ":".
