@@ -6,6 +6,7 @@
             intended to provide reporting interface to owbmonsvr nodes
             runs continuously, exits != 0 if cant create a socket to listen on
 
+TODO: signal handler to remove run file
 TODO: proper syslog style error logging
 */
 
@@ -23,11 +24,14 @@ TODO: proper syslog style error logging
 #define PORT       1969
 #define MAXMSGLEN  512
 #define MAXCFGLINE 255
+#define MAXPIDLEN  30
 // backlog for listen for server socket
 #define LSTNBACKLOG 5
 
 // max number of sensors on a node
 #define NSENSORS 4
+
+#define RUNFILE "/var/run/lock/owbmonsvr.pid"
 
 // used to store calibration data for a specific node
 // values in calibration fields are added to values received from node
@@ -40,6 +44,9 @@ struct nodecfg_st
    // calibration adjustment for each sensor
    int  cal[NSENSORS];
 };
+
+// this has to be global so that the atexit() function can work
+char *fn_run;
 
 //---------------------------------------- readnodecfg
 /**
@@ -216,7 +223,7 @@ printmsg(struct nodecfg_st **nodecfgs, char *msg, char *fn_out)
     now = time(NULL);
     tmnow = localtime(&now);
     fprintf(fh, "%04d%02d%02d%02d%02d%02d ", 1900+(tmnow->tm_year)
-     , tmnow->tm_mon, 1+tmnow->tm_mday, tmnow->tm_hour, tmnow->tm_min
+     , 1+tmnow->tm_mon, tmnow->tm_mday, tmnow->tm_hour, tmnow->tm_min
      , tmnow->tm_sec);
 
     if(nodecfg)
@@ -284,7 +291,7 @@ readnode (int fd, char *msg)
 
 //---------------------------------------- make_socket
 /**
-   Creates a bound socket that can be listended
+   Creates a bound socket that can be listened
    @param port port number
    @return open socket, -1 on error
 */
@@ -328,6 +335,7 @@ usage(void)
      "-f                 run in the foreground, otherwise we daemonize\n"
      "-h                 this help message\n"
      "-o <out_file>      store output data in this file (default is stdout)\n"
+     "-m                 allow multiple instances of owbmonsvr\n"
      "-p <port>          listen on specified port, default is %d\n"
      "\n"
      "Node Config File\n"
@@ -340,6 +348,57 @@ usage(void)
 
     return;
 } // usage
+
+//---------------------------------------- rmrunfile
+/**
+  remove run file
+*/
+void
+rmrunfile(void)
+{
+    unlink(fn_run);
+} // rmrunfile
+
+//---------------------------------------- makerunfile
+/**
+  create a run file, exit if it already exists and pid is active
+*/
+void
+makerunfile(void)
+{
+    FILE  *fh; 
+    char  txt[MAXPIDLEN+2];
+    int   mkfile = 1;
+    pid_t pid;
+
+    fh = fopen(fn_run, "r");
+    if(fh != NULL)
+    {
+        fgets(txt, MAXPIDLEN, fh);
+        fclose(fh);
+
+        pid = atol(txt);
+        if(kill(pid, 0) == 0)
+        {
+            mkfile = 0;
+            perror("owbmonsvr already running, exiting");
+            exit(1);
+        }
+    }
+
+    if(mkfile)
+    {
+        fh = fopen(fn_run, "w+");
+        if(fh != NULL)
+        {
+            fprintf(fh, "%ld",  (long) getpid());
+            fclose(fh);
+            atexit(rmrunfile);
+        }
+    }
+
+    return;
+} // makerunfile
 
 //---------------------------------------- main
 /**
@@ -355,6 +414,7 @@ main(int argc, char *argv[])
     int    i;
     int    foreground = 0;
     int    portn = PORT;
+    int    allowmulti = 0;
     size_t size;
     fd_set active_fd_set;
     fd_set read_fd_set;
@@ -366,8 +426,9 @@ main(int argc, char *argv[])
     struct nodecfg_st **nodecfgs = NULL;
     struct nodemsg_st *nodemsg;
 
+    fn_run = RUNFILE;
 
-    while((opt=getopt(argc, argv, "c:fho:p:")) != -1)
+    while((opt=getopt(argc, argv, "c:fho:p:r:")) != -1)
     {
         switch(opt)
         {
@@ -387,6 +448,10 @@ main(int argc, char *argv[])
                 portn = atoi(optarg);
                 break;
 
+            case 'r':
+                fn_run = optarg;
+                break;
+
             case 'h':
             default:
                 usage();
@@ -400,6 +465,9 @@ main(int argc, char *argv[])
 
     if(fn_nodecfg)
         nodecfgs = readnodecfg(fn_nodecfg);
+
+   // we exit if there is another instance already running
+   makerunfile();
 
    sock = make_socket(portn);
    if (listen(sock, LSTNBACKLOG) < 0)

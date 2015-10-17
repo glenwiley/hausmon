@@ -35,11 +35,11 @@
 const char WiFiPSK[] = "jandgwiley";
 int       svrport = 1969;
 
-//const char WiFiSSID[] = "haus1";
-//IPAddress svrip(10,45,2,1); 
+const char WiFiSSID[] = "haus1";
+IPAddress svrip(10,45,2,1); 
 
-const char WiFiSSID[] = "haus2";
-IPAddress svrip(192,168,1,2); 
+//const char WiFiSSID[] = "haus2";
+//IPAddress svrip(192,168,1,2); 
 
 // initializes the wifi library, need this in file scope
 WiFiClient wificlient;
