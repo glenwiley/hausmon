@@ -33,12 +33,10 @@
 
 //---------------------------------------- WiFi Definitions
 const char WiFiPSK[] = "jandgwiley";
+const char WiFiSSID[] = "haus1";
 int       svrport = 1969;
 
-const char WiFiSSID[] = "haus1";
 IPAddress svrip(10,45,2,1); 
-
-//const char WiFiSSID[] = "haus2";
 //IPAddress svrip(192,168,1,2); 
 
 // initializes the wifi library, need this in file scope
@@ -179,42 +177,33 @@ loop()
 
 	// TC74 at address A0
 
-	digitalWrite(LED_PIN, HIGH);
 	sensorval = readTC74(TC74A0_I2CADDR);
 	msg += String(sensorval);
 	msg += " ";
-	digitalWrite(LED_PIN, LOW);
 	delay(10);
 
 	// TC74 at address A2
 
-	digitalWrite(LED_PIN, HIGH);
 	sensorval = readTC74(TC74A2_I2CADDR);
 	msg += String(sensorval);
 	msg += " ";
-	digitalWrite(LED_PIN, LOW);
 	delay(10);
 
 	// TC74 at address A5
 
-	digitalWrite(LED_PIN, HIGH);
 	sensorval = readTC74(TC74A5_I2CADDR);
 	msg += String(sensorval);
 	msg += " ";
-	digitalWrite(LED_PIN, LOW);
 	delay(10);
 
 	// CT on the AD pin
 
-	digitalWrite(LED_PIN, HIGH);
 	sensorval = readCT();
 	msg += String(sensorval);
-	digitalWrite(LED_PIN, LOW);
 	delay(10);
 
 	// send the readings over wifi
 
-	digitalWrite(LED_PIN, HIGH);
 	Serial.println(msg);
 	wificlient.println(msg);
 	wificlient.flush();
@@ -233,21 +222,24 @@ loop()
 void
 connectWiFi()
 {
-   Serial.print("attempting to join WiFi SSID: ");
-   Serial.println(WiFiSSID);
+    char *ssid;
+    char *psk;
 
-   digitalWrite(LED_PIN, HIGH);
-   // attach to the wifi network
-   WiFi.begin(WiFiSSID, WiFiPSK);
-   while (WiFi.status() != WL_CONNECTED)
-   {
-      digitalWrite(LED_PIN, LOW);
-      delay(100);
-      digitalWrite(LED_PIN, HIGH);
-   }
-   digitalWrite(LED_PIN, LOW);
+    Serial.print("attempting to join WiFi SSID: ");
+    Serial.println(WiFiSSID);
 
-   Serial.println("Connected to WiFi");
+    digitalWrite(LED_PIN, HIGH);
+    // attach to the wifi network
+    WiFi.begin(WiFiSSID, WiFiPSK);
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        digitalWrite(LED_PIN, LOW);
+        delay(100);
+        digitalWrite(LED_PIN, HIGH);
+    }
+    digitalWrite(LED_PIN, LOW);
+
+    Serial.println("Connected to WiFi");
 } // connectWiFi
 
 //---------------------------------------- initHardware
