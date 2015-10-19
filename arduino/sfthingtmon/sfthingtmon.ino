@@ -93,6 +93,7 @@ readTC74(int addr)
 	{
 		// blink LED/serial error message to show failed transmit
 		Serial.println("write TC74 failed");
+        res = 0;
 	}
 	else
 	{
